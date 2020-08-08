@@ -24,14 +24,11 @@ response).
 
 - Every order is created within a new thread, as the response can be available only after the last order from the batch is filled.
 
-- Every batch is added to a map as they need to be safely removed once the execution server returns the updated values.
-That is, for example a contiguous data structure like a list would be problematic in this case.
+- Every batch is added to a map as they need to be safely removed once the execution server returns the updated values. That is, a contiguous data structure like a list would be very non efficient.
 
 - Every batch, besides the list of orders, includes two variables:
-<br/>1. "executed": a boolean. It's true once the batch was sent to execution.
-All the threads except "the last one" from the batch use it to know when to return the response.
-<br/>2. "finished_orders_num": an integer. It's the number of orders in a batch that already took the values returned by the execution server.
-"The last order" from the batch uses it to know when the batch can be safely deleted.
+<br/>1. "executed": a boolean. Becomes true once the batch was sent to execution. All the threads in the batch except _the last one_ use it to know when the response became available.
+<br/>2. "finished_orders_num": an integer. The number of orders in a batch that already stored the values returned by the execution server. Used by the _last order_ from the batch to know when the batch can be safely deleted.
 
 - If an integer is passed as the first parameter to the main function, then it's used as the size of the batches. Otherwise, the default is used (10).
 
