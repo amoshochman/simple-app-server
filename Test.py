@@ -7,21 +7,25 @@ PORT = 8080
 OK = 200
 BAD_REQUEST = 400
 INTERNAL_SERVER_ERROR = 500
-ORDERS_NUM = 2
+EXECUTION_BATCH_SIZE = 2
 APPROVED = "approved"
 REJECTED = "rejected"
+"""
+all_batches is a list of OrdersBatch.
+All the batches are all the time full, maybe except for the last one.
+Every new order is appended to the last batch, if not full.
+Otherwise, a new batch is created and the order appended to it.
+"""
+all_batches = []
 
-# "all_orders" variable is right now global. Is that correct?
-# And how could the variable "ORDERS_NUM" be changed? Should be by default 10
-all_orders = []
 
-
-class OrderList:
+class OrdersBatch:
     """
-    A list of orders: a simple wrapper for a list.
-    In addition to the orders, it stores the boolean "executed",
+    A batch of orders: a simple wrapper for a list of orders.
+    It stores the orders and the boolean "executed",
     which is true iff the list was already sent to the execution server.
     """
+
     def __init__(self):
         self.__orders = []
         self.__executed = False
@@ -51,6 +55,11 @@ class OrderList:
 
 
 class Order:
+    """
+    An order. They are instantiated by the App Server,
+    which sends them in batches to the Execution Server.
+    """
+
     def __init__(self, price, order):
         self.price = price
         self.order = order
@@ -58,11 +67,16 @@ class Order:
 
 
 class ExecutionSdk:
+    """
+    A mock of the Execution Server.
+    Receives a batch of orders, updates them and returns them.
+    """
+
     @staticmethod
     def execute_orders(orders: list):
         orders = orders.copy()
         """
-        The mock execution server approves the orders for odd-number prices.
+        An almost-trivial mocking: the server approves the orders for odd-number prices.
         """
         for order in orders:
             order.status = APPROVED if int(order.price) % 2 else REJECTED
@@ -70,6 +84,10 @@ class ExecutionSdk:
 
 
 class MyServer(BaseHTTPRequestHandler):
+    """
+    The Application Server.
+    """
+
     def exit(self, code):
         self.send_response(code)
         self.end_headers()
@@ -83,25 +101,24 @@ class MyServer(BaseHTTPRequestHandler):
         order = content.get('order')
 
         """
-        If price or order are missing from POST, the operation should fail.
-        Some error msg should/can be added?
+        If price or order are missing from POST request, the operation fails.
         """
         if not price or not order:
             exit(BAD_REQUEST)
 
         current_order = Order(price, order)
-        current_list = MyServer.get_current_list(current_order)
+        current_batch = MyServer.get_current_batch(current_order)
 
         """
-        At this point, we got the order and the correspondent list.
-        If the list is full, it can be sent to the execution server.
-        Otherwise, we wait for the list to be full. 
-        That is, until "executed" parameter becomes True in object current_list.
+        At this point, we have the order and the correspondent batch.
+        If the batch is full, it can be sent to the execution server.
+        Otherwise, we wait for the batch to be full. 
+        That is, until "was_executed()" returns True.
         """
-        if len(current_list) == ORDERS_NUM:
-            current_list.execute()
+        if len(current_batch) == EXECUTION_BATCH_SIZE:
+            current_batch.execute()
 
-        while not current_list.was_executed():
+        while not current_batch.was_executed():
             pass
 
         """
@@ -110,26 +127,27 @@ class MyServer(BaseHTTPRequestHandler):
         """
         self.exit(OK if current_order.status == APPROVED else INTERNAL_SERVER_ERROR)
 
-        # how can we further check?
-        # how can we remove all lists that are now garbage?
-
     @staticmethod
-    def get_current_list(current_order):
+    def get_current_batch(current_order):
         """
-        Receives an order and returns the full list that will be eventually sent to execution.
+        Receives an order and returns the relevant batch.
         :param current_order: The order being processed.
-        :return: The list in which the order will be executed.
+        :return: The batch that the order will belong to.
         """
-        global all_orders
-        current_list_index = len(all_orders) - 1
-        if current_list_index==-1 or len(all_orders[current_list_index]):
-            current_list_index += 1
-        current_list = next((lst for lst in all_orders if not lst.was_executed()), None)
-        if not current_list:
-            current_list = OrderList()
-            all_orders.append(current_list)
-        current_list.append(current_order)
-        return current_list
+        global all_batches
+        """
+        We create a new batch if the last one is full or if there are no batches yet.
+        """
+        if not all_batches or len(all_batches[-1]) == EXECUTION_BATCH_SIZE:
+            current_batch = OrdersBatch()
+            all_batches.append(current_batch)
+        else:
+            current_batch = all_batches[-1]
+        """
+        The batch is defined; the order can be appended to it.
+        """
+        current_batch.append(current_order)
+        return current_batch
 
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
@@ -137,10 +155,7 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
 
 
 if __name__ == "__main__":
-    # webServer = HTTPServer((HOST_NAME, PORT), MyServer)
-
     webServer = ThreadedHTTPServer((HOST_NAME, PORT), MyServer)
-
     print("Server started http://%s:%s" % (HOST_NAME, PORT))
     try:
         webServer.serve_forever()

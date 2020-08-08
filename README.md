@@ -1,5 +1,6 @@
 # simple-app-server
-A simple server that listens for POST requests in parallel.
+
+##A simple server that listens for POST requests in parallel.
 
 The client is a simple web client application that sends a request to buy or sell USD through
 HTTP POST request. The application server waits for enough requests (default 10) and sends
