@@ -118,24 +118,19 @@ class MyServer(BaseHTTPRequestHandler):
         content = self.rfile.read(content_length)
         content = json.loads(content)
 
-        price_input = content.get('price')
-        order_input = content.get('order')
+        price = content.get('price')
+        order = content.get('order')
 
         """
         If price or order are missing from POST request, the operation fails.
         """
-        if not price_input or not order_input:
+        if not price or not order:
             exit(BAD_REQUEST)
 
-        order = Order(price_input, order_input)
+        current_order = Order(price, order)
 
-        # critic part!!
-        index = MyServer.get_order_index()
-        # !!!!!!!!!!!!!!!!!!!!!
+        current_batch, current_index = MyServer.get_current_batch(current_order)
 
-        global all_batches
-        batch = all_batches[MyServer.get_batch_index(index)]
-        batch.append(order)
 
         """
         At this point, we have the order and the correspondent batch.
@@ -143,17 +138,17 @@ class MyServer(BaseHTTPRequestHandler):
         Otherwise, we wait for the batch to be full. 
         That is, until "was_executed()" returns True.
         """
-        if len(batch) == EXECUTION_BATCH_SIZE:
-            batch.execute()
-            exit_code = MyServer.get_exit_code(index)#(batch, order)
-            while not batch.all_orders_ended():
+        if len(current_batch) == EXECUTION_BATCH_SIZE:
+            current_batch.execute()
+            exit_code = MyServer.get_exit_code(current_batch, current_order)
+            while not current_batch.all_orders_ended():
                 pass
-            all_batches.pop(int(index / EXECUTION_BATCH_SIZE))
+            all_batches.pop(int(current_index / EXECUTION_BATCH_SIZE))
 
         else:
-            while not batch.was_executed():
+            while not current_batch.was_executed():
                 pass
-            exit_code = MyServer.get_exit_code(index)#(batch, order)
+            exit_code = MyServer.get_exit_code(current_batch, current_order)
 
         """
         At this point, we know the request was well formed.
@@ -162,25 +157,27 @@ class MyServer(BaseHTTPRequestHandler):
         self.exit(exit_code)
 
     @staticmethod
-    def get_exit_code(order_index):
-        batch_index = MyServer.get_batch_index(order_index)
-        batch = all_batches[batch_index]
-
-        order = all_batches[batch_index][]
-
-        batch.increase_ended()
-
+    def get_exit_code(current_batch, current_order):
+        current_batch.increase_ended()
         return OK if current_order.status == APPROVED else INTERNAL_SERVER_ERROR
 
     @staticmethod
-    def get_order_index():
-        global global_index
-        global_index += 1
-        return global_index - 1
+    def get_current_batch(current_order):
+        """
+        Receives an order and returns the relevant batch.
+        :param current_order: The order being processed.
+        :return: The batch that the order will belong to.
+        """
+        global all_batches, global_index
+        """
+        We create a new batch if the last one is full or if there are no batches yet.
+        """
 
-    @staticmethod
-    def get_batch_index(order_index):
-        return int(order_index / EXECUTION_BATCH_SIZE)
+        batch_index = int(global_index / EXECUTION_BATCH_SIZE)
+        current_batch = all_batches[batch_index]
+        current_batch.append(current_order)
+        global_index += 1
+        return current_batch, global_index-1
 
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
