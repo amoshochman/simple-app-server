@@ -1,6 +1,7 @@
 import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
+from collections import defaultdict
 
 HOST_NAME = ""
 PORT = 8080
@@ -16,7 +17,8 @@ All the batches are all the time full, maybe except for the last one.
 Every new order is appended to the last batch, if not full.
 Otherwise, a new batch is created and the order appended to it.
 """
-all_batches = []
+
+global_index = 0
 
 
 class OrdersBatch:
@@ -29,9 +31,16 @@ class OrdersBatch:
     def __init__(self):
         self.__orders = []
         self.__executed = False
+        self.__finished_orders_num = 0
 
     def __len__(self):
         return len(self.__orders)
+
+    def increase_ended(self):
+        self.__finished_orders_num += 1
+
+    def all_orders_ended(self):
+        return self.__finished_orders_num == EXECUTION_BATCH_SIZE
 
     def append(self, order):
         self.__orders.append(order)
@@ -54,6 +63,9 @@ class OrdersBatch:
         self.__executed = True
 
 
+all_batches = defaultdict(OrdersBatch)
+
+
 class Order:
     """
     An order. They are instantiated by the App Server,
@@ -73,14 +85,23 @@ class ExecutionSdk:
     """
 
     @staticmethod
-    def execute_orders(orders: list):
+    def execute_orders(orders: list, index=None):
+        """
+        Execute orders received from the App Server. "index" parameter not being used,
+        added just to illustrate how it could be in reality.
+        (That is, the execution server wouldn't work like in the mocking
+        but in a asynchronous way.)
+        :param orders: The orders.
+        :param index: The index for the list of orders.
+        :return: The updated orders.
+        """
         orders = orders.copy()
         """
         An almost-trivial mocking: the server approves the orders for odd-number prices.
         """
         for order in orders:
             order.status = APPROVED if int(order.price) % 2 else REJECTED
-        return orders
+        return orders, index
 
 
 class MyServer(BaseHTTPRequestHandler):
@@ -107,7 +128,9 @@ class MyServer(BaseHTTPRequestHandler):
             exit(BAD_REQUEST)
 
         current_order = Order(price, order)
-        current_batch = MyServer.get_current_batch(current_order)
+
+        current_batch, current_index = MyServer.get_current_batch(current_order)
+
 
         """
         At this point, we have the order and the correspondent batch.
@@ -117,15 +140,26 @@ class MyServer(BaseHTTPRequestHandler):
         """
         if len(current_batch) == EXECUTION_BATCH_SIZE:
             current_batch.execute()
+            exit_code = MyServer.get_exit_code(current_batch, current_order)
+            while not current_batch.all_orders_ended():
+                pass
+            all_batches.pop(int(current_index / EXECUTION_BATCH_SIZE))
 
-        while not current_batch.was_executed():
-            pass
+        else:
+            while not current_batch.was_executed():
+                pass
+            exit_code = MyServer.get_exit_code(current_batch, current_order)
 
         """
         At this point, we know the request was well formed.
         The response code is "OK" iff the execution server returned APPROVED.
         """
-        self.exit(OK if current_order.status == APPROVED else INTERNAL_SERVER_ERROR)
+        self.exit(exit_code)
+
+    @staticmethod
+    def get_exit_code(current_batch, current_order):
+        current_batch.increase_ended()
+        return OK if current_order.status == APPROVED else INTERNAL_SERVER_ERROR
 
     @staticmethod
     def get_current_batch(current_order):
@@ -134,20 +168,16 @@ class MyServer(BaseHTTPRequestHandler):
         :param current_order: The order being processed.
         :return: The batch that the order will belong to.
         """
-        global all_batches
+        global all_batches, global_index
         """
         We create a new batch if the last one is full or if there are no batches yet.
         """
-        if not all_batches or len(all_batches[-1]) == EXECUTION_BATCH_SIZE:
-            current_batch = OrdersBatch()
-            all_batches.append(current_batch)
-        else:
-            current_batch = all_batches[-1]
-        """
-        The batch is defined; the order can be appended to it.
-        """
+
+        batch_index = int(global_index / EXECUTION_BATCH_SIZE)
+        current_batch = all_batches[batch_index]
         current_batch.append(current_order)
-        return current_batch
+        global_index += 1
+        return current_batch, global_index-1
 
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
