@@ -1,6 +1,6 @@
 # simple-app-server
 
-##A simple server that listens for POST requests in parallel.
+## A simple server that listens for POST requests in parallel.
 
 ### 1. The Task:
 
