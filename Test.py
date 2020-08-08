@@ -4,6 +4,7 @@ import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 from collections import defaultdict
+import threading
 
 HOST_NAME = ""
 PORT = 8080
@@ -30,7 +31,8 @@ class OrdersBatch:
         return len(self.__orders)
 
     def increase_ended(self):
-        self.__finished_orders_num += 1
+        with lock:
+            self.__finished_orders_num += 1
 
     def all_orders_ended(self):
         """
@@ -62,6 +64,7 @@ class OrdersBatch:
         self.__executed = True
 
 
+lock = threading.Lock()
 global_index = -1
 all_batches = defaultdict(OrdersBatch)
 
@@ -70,6 +73,8 @@ all_batches is a dictionary of OrdersBatch which uses as key the number of batch
 Every new order increases global_index by 1 and it's appended
 to batch number floor(global_index/EXECUTION_BATCH_SIZE).
 When all the information from a batch of orders is used, the batch is deleted.
+We lock two critical sections. When we're retrieving the number of the
+relevant batch, and when the number of ended orders within a batch is updated.
 """
 
 
@@ -135,7 +140,8 @@ class MyServer(BaseHTTPRequestHandler):
 
         order = Order(price_input, order_input)
 
-        batch, batch_index, index_in_batch = MyServer.get_batch(order)
+        with lock:
+            batch, batch_index, index_in_batch = MyServer.get_batch(order)
 
         """
         At this point, we have the batch and the relevant indices:
