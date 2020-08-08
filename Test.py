@@ -12,14 +12,6 @@ INTERNAL_SERVER_ERROR = 500
 EXECUTION_BATCH_SIZE = 2
 APPROVED = "approved"
 REJECTED = "rejected"
-"""
-all_batches is a list of OrdersBatch.
-All the batches are all the time full, maybe except for the last one.
-Every new order is appended to the last batch, if not full.
-Otherwise, a new batch is created and the order appended to it.
-"""
-
-global_index = -1
 
 
 class OrdersBatch:
@@ -41,6 +33,11 @@ class OrdersBatch:
         self.__finished_orders_num += 1
 
     def all_orders_ended(self):
+        """
+        Returns True if all the orders "finished".
+        :return: True iff all the threads stored the values returned by the
+        execution server.
+        """
         return self.__finished_orders_num == EXECUTION_BATCH_SIZE
 
     def append(self, order):
@@ -58,18 +55,27 @@ class OrdersBatch:
     def execute(self):
         """
         Sents the orders to execution and sets the boolean "executed" to True.
+        That boolean is used by the other threads to know that the orders were processed.
         :return: The orders after the update.
         """
         self.__orders = ExecutionSdk.execute_orders(self.__orders)
         self.__executed = True
 
 
+global_index = -1
 all_batches = defaultdict(OrdersBatch)
+
+"""
+all_batches is a dictionary of OrdersBatch which uses as key the number of batch.
+Every new order increases global_index by 1 and it's appended
+to batch number floor(global_index/EXECUTION_BATCH_SIZE).
+When all the information from a batch of orders is used, the batch is deleted.
+"""
 
 
 class Order:
     """
-    An order. They are instantiated by the App Server,
+    An order. It's instantiated by the App Server,
     which sends them in batches to the Execution Server.
     """
 
@@ -89,9 +95,8 @@ class ExecutionSdk:
     def execute_orders(orders: list, index=None):
         """
         Execute orders received from the App Server. "index" parameter not being used,
-        added just to illustrate how it could be in reality.
-        (That is, the execution server wouldn't work like in the mocking
-        but in a asynchronous way.)
+        added just to illustrate how it should really work.
+        That is, the execution server would in an asynchronous way.
         :param orders: The orders.
         :param index: The index for the list of orders.
         :return: The updated orders.
@@ -119,25 +124,27 @@ class MyServer(BaseHTTPRequestHandler):
         content = self.rfile.read(content_length)
         content = json.loads(content)
 
-        price = content.get('price')
-        order = content.get('order')
+        price_input = content.get('price')
+        order_input = content.get('order')
 
         """
         If price or order are missing from POST request, the operation fails.
         """
-        if not price or not order:
+        if not price_input or not order_input:
             exit(BAD_REQUEST)
 
-        order = Order(price, order)
+        order = Order(price_input, order_input)
 
         batch, batch_index, index_in_batch = MyServer.get_batch(order)
 
         """
-        At this point, we have the order and the correspondent batch.
-        If the batch is full, it can be sent to the execution server.
-        Otherwise, we wait for the batch to be full. 
-        That is, until "was_executed()" returns True.
+        At this point, we have the batch and the relevant indices:
+        The batch index and the order index within the batch.
+        If the batch is not full, the server waits. 
+        If the batch is full, it's sent to the execution server.
+        That happens when "was_executed()" returns True.
         """
+
         if index_in_batch < EXECUTION_BATCH_SIZE - 1:
             while not batch.was_executed():
                 time.sleep(1)
@@ -148,6 +155,12 @@ class MyServer(BaseHTTPRequestHandler):
             exit_code = MyServer.get_exit_code(batch, order)
             while not batch.all_orders_ended():
                 time.sleep(1)
+            """
+            After the calling to "get_exit_code", the number of finished threads within the
+            batch was increased by one and the relevant information from the execution server
+            was stored. Therefore, in case this was the last order in the batch, 
+            the batch can be safely removed.
+            """
             all_batches.pop(batch_index)
 
         """
@@ -156,10 +169,19 @@ class MyServer(BaseHTTPRequestHandler):
         """
         self.exit(exit_code)
 
+
     @staticmethod
-    def get_exit_code(current_batch, current_order):
-        current_batch.increase_ended()
-        return OK if current_order.status == APPROVED else INTERNAL_SERVER_ERROR
+    def get_exit_code(batch, order):
+        """
+        Given a batch and an order, it increases the number of "finished orders"
+        in the batch, and returns the relevant exit code.
+        :param batch: A batch of orders.
+        :param order: The relevant order.
+        :return: The relevant exit code.
+        """
+        batch.increase_ended()
+        return OK if order.status == APPROVED else INTERNAL_SERVER_ERROR
+
 
     @staticmethod
     def get_batch(order):
@@ -167,15 +189,20 @@ class MyServer(BaseHTTPRequestHandler):
         Receives an order and returns the relevant batch.
         :param order: The order being processed.
         :return: The batch that the order will belong to, the index of the relevant batch
-        and the index of the order inside the batch.
+        and the index of the order within the batch.
         """
         global all_batches, global_index
-        """
-        We create a new batch if the last one is full or if there are no batches yet.
-        """
         global_index += 1
+        """
+        The global index defines both the index of the batch and the index 
+        within the batch.
+        """
         batch_index = int(global_index / EXECUTION_BATCH_SIZE)
         index_in_batch = global_index % EXECUTION_BATCH_SIZE
+        """
+        A collections.defaultdict is used. If all_batches[batch_index] doesn't exist,
+        a new OrdersBatch it's created.
+        """
         batch = all_batches[batch_index]
         batch.append(order)
         return batch, batch_index, index_in_batch
