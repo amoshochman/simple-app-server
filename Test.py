@@ -1,15 +1,16 @@
 import json
+import time
+import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 from collections import defaultdict
-import time
 
 HOST_NAME = ""
 PORT = 8080
 OK = 200
 BAD_REQUEST = 400
 INTERNAL_SERVER_ERROR = 500
-EXECUTION_BATCH_SIZE = 2
+# EXECUTION_BATCH_SIZE = 2
 APPROVED = "approved"
 REJECTED = "rejected"
 
@@ -169,7 +170,6 @@ class MyServer(BaseHTTPRequestHandler):
         """
         self.exit(exit_code)
 
-
     @staticmethod
     def get_exit_code(batch, order):
         """
@@ -181,7 +181,6 @@ class MyServer(BaseHTTPRequestHandler):
         """
         batch.increase_ended()
         return OK if order.status == APPROVED else INTERNAL_SERVER_ERROR
-
 
     @staticmethod
     def get_batch(order):
@@ -213,6 +212,14 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
 
 
 if __name__ == "__main__":
+    """
+    If parameters are provided and the first one is an integer,
+    it's taken as the EXECUTION_BATCH_SIZE.
+    """
+    try:
+        EXECUTION_BATCH_SIZE = int(sys.argv[1])
+    except (ValueError, IndexError):
+        EXECUTION_BATCH_SIZE = 10
     webServer = ThreadedHTTPServer((HOST_NAME, PORT), MyServer)
     print("Server started http://%s:%s" % (HOST_NAME, PORT))
     try:
